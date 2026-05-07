@@ -262,6 +262,7 @@
   .bin-row .bin-fill .bar-in{height:100%; transition:width .8s ease}
   .bin-row .pct{min-width:34px; text-align:right; color:var(--text-dim); font-variant-numeric:tabular-nums}
 </style>
+<script defer src="simulator.js"></script>
 </head>
 <body>
 
@@ -934,12 +935,13 @@ function pushChart(chart, idx, value) {
 // WEBSOCKET
 // ============================================================================
 function connectWS() {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(`${proto}//${location.host}/live`);
-  ws.onopen = () => console.log('[CityPulse] connected');
-  ws.onclose = () => { console.log('[CityPulse] reconnecting…'); setTimeout(connectWS, 1000); };
-  ws.onmessage = e => {
-    const msg = JSON.parse(e.data);
+  // In-browser simulator (no backend required — works on any static host)
+  if (!window.CityPulseSim) {
+    console.error('[CityPulse] simulator.js not loaded');
+    return;
+  }
+  console.log('[CityPulse] connected (in-browser simulator)');
+  window.CityPulseSim.connect(msg => {
     if (msg.type === 'hello') {
       cached.zones = msg.payload.zones || [];
       cached.beaches = msg.payload.beachZones || [];
@@ -987,7 +989,7 @@ function connectWS() {
       // Visual ripple on the map
       if (map.isStyleLoaded()) spawnDecisionPulse(msg.payload);
     }
-  };
+  });
 }
 connectWS();
 
