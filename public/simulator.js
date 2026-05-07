@@ -132,11 +132,215 @@
     };
   }
 
+  // ---- live event engine -------------------------------------------------
+  // Each event mutates real state AND immediately fires an AI decision so
+  // the dashboard ripple animates at the affected location.
+  function triggerLiveEvent(hour, occ, beachOcc) {
+    const events = [
+      // 1. Tour bus arrival → zone fills → AI pre-cools
+      () => {
+        const z = choice(zones);
+        z.occupancy_pct = clamp(z.occupancy_pct + rand(15, 35), 0, 100);
+        z.current_count = Math.round((z.occupancy_pct / 100) * z.capacity);
+        z.hvac_setpoint = 21;
+        z.lighting_pct = clamp(z.lighting_pct + 20, 25, 95);
+        const saved = +rand(8, 18).toFixed(1);
+        counters.energy_saved_kwh += saved;
+        counters.energy_cost_saved_egp += saved * 2.30;
+        counters.co2_avoided_kg += saved * 0.51;
+        pushDecision({
+          module: 'EcoSync',
+          action: 'tour_bus_detected_pre_cool',
+          zone: z.name,
+          detail: 'Crowd surge to ' + z.occupancy_pct.toFixed(0) + '% → HVAC pre-cool 21°C, lighting ↑',
+          saved_kwh: saved
+        });
+      },
+      // 2. VIP checkout → zone empties → AI shuts wing
+      () => {
+        const z = choice(zones);
+        z.occupancy_pct = clamp(rand(2, 12), 0, 100);
+        z.current_count = Math.round((z.occupancy_pct / 100) * z.capacity);
+        z.hvac_setpoint = 27;
+        z.lighting_pct = 25;
+        const saved = +rand(10, 25).toFixed(1);
+        counters.energy_saved_kwh += saved;
+        counters.energy_cost_saved_egp += saved * 2.30;
+        counters.co2_avoided_kg += saved * 0.51;
+        pushDecision({
+          module: 'EcoSync',
+          action: 'wing_shutdown_unoccupied',
+          zone: z.name,
+          detail: 'Floor 6-12 vacated → HVAC 27°C standby, lighting 25%',
+          saved_kwh: saved
+        });
+      },
+      // 3. Smart bin overflow trigger → truck routed
+      () => {
+        const b = choice(bins);
+        b.fill = 0.95;
+        const dispatched = +rand(8, 18).toFixed(1);
+        counters.diesel_saved_l += dispatched;
+        b.fill = 0.05;
+        b.full_count_today += 1;
+        pushDecision({
+          module: 'EcoSync',
+          action: 'bin_overflow_truck_dispatched',
+          zone: 'Bin ' + b.id.toUpperCase(),
+          detail: 'Fill 95% → priority dispatch; 3 nearby empty bins skipped',
+          saved_l_diesel: dispatched
+        });
+      },
+      // 4. Waste route consolidated → trips cancelled (always visible)
+      () => {
+        const trips = randInt(1, 3);
+        const diesel = trips * 25;
+        counters.truck_trips_cancelled += trips;
+        counters.diesel_saved_l += diesel;
+        const z = choice(zones);
+        pushDecision({
+          module: 'EcoSync',
+          action: 'route_consolidated',
+          zone: z.name,
+          detail: trips + ' truck trip(s) cancelled — bins below threshold along promenade segment',
+          saved_l_diesel: diesel
+        });
+      },
+      // 5. Beach visitor surge → BeachPulse surge pricing
+      () => {
+        const b = choice(beachZones);
+        b.occupancy_pct = +clamp(rand(82, 96), 0, 100).toFixed(1);
+        b.current_count = Math.round(b.capacity * b.occupancy_pct / 100);
+        b.surge = 1.5;
+        b.price_egp = 225;
+        b.tier = 'high_demand';
+        const newRev = +rand(450, 1200).toFixed(0);
+        counters.beach_revenue_egp += newRev;
+        pushDecision({
+          module: 'TideSync / BeachPulse',
+          action: 'surge_pricing_activated',
+          zone: b.name,
+          detail: 'Occupancy ' + b.occupancy_pct + '% → price 150 → 225 EGP, +' + newRev + ' EGP this minute'
+        });
+      },
+      // 6. Beach overcrowded → AI redirect
+      () => {
+        const overcrowded = choice(beachZones);
+        const underused = beachZones.filter(b => b !== overcrowded).reduce((min, b) =>
+          (b.occupancy_pct || 0) < (min.occupancy_pct || 100) ? b : min, beachZones[0]);
+        overcrowded.occupancy_pct = +clamp(rand(85, 98), 0, 100).toFixed(1);
+        pushDecision({
+          module: 'TideSync / BeachPulse',
+          action: 'visitor_redirect_pushed',
+          zone: overcrowded.name,
+          detail: overcrowded.occupancy_pct + '% full → push notification to 1,200 app users → ' + underused.name + ' (EGP ' + (underused.price_egp || 150) + ')'
+        });
+      },
+      // 7. Wind shift → AquaGuard early warning
+      () => {
+        const s = choice(marineStations);
+        s.chlorophyll_a = clamp(s.chlorophyll_a + rand(0.4, 0.9), 0.3, 6);
+        const bz = beachZones.find(b => b.id === s.zone_id);
+        pushDecision({
+          module: 'TideSync / AquaGuard',
+          action: 'wind_shift_chlorophyll_alert',
+          zone: bz ? bz.name : s.zone_id,
+          detail: 'Onshore wind + Chl-a ' + s.chlorophyll_a.toFixed(1) + ' μg/L → 48-72h HAB watch issued'
+        });
+      },
+      // 8. Pollution event → zone closure
+      () => {
+        const s = choice(marineStations);
+        s.turbidity = clamp(s.turbidity + rand(2, 4), 0.5, 8);
+        s.swimming_score = 2.1;
+        s.swimming_rating = 'caution';
+        const bz = beachZones.find(b => b.id === s.zone_id);
+        pushDecision({
+          module: 'TideSync / AquaGuard',
+          action: 'turbidity_spike_zone_advisory',
+          zone: bz ? bz.name : s.zone_id,
+          detail: 'Turbidity ' + s.turbidity.toFixed(1) + ' NTU → swim score 2.1, public displays updated'
+        });
+      },
+      // 9. RO membrane pressure spike → DesalSync flags maintenance
+      () => {
+        const t = choice(desalTrains);
+        t.pressure = clamp(t.pressure + rand(2, 4), 58, 72);
+        t.health = clamp(t.health - 0.01, 0.5, 1.0);
+        pushDecision({
+          module: 'TideSync / DesalSync',
+          action: 'membrane_fouling_predicted',
+          zone: 'RO Train ' + t.id,
+          detail: 'TMP ' + t.pressure.toFixed(1) + ' bar (+' + rand(2, 4).toFixed(1) + ') → fouling forecast 14 days, $500K replacement avoided'
+        });
+      },
+      // 10. Demand drop → DesalSync pauses train
+      () => {
+        const active = desalTrains.filter(t => t.active);
+        if (active.length > 0) {
+          const t = choice(active);
+          t.active = false;
+          const saved = +rand(80, 220).toFixed(0);
+          counters.desal_energy_saved_kwh += saved;
+          counters.desal_cost_saved_egp += saved * 2.30;
+          counters.co2_avoided_kg += saved * 0.51;
+          pushDecision({
+            module: 'TideSync / DesalSync',
+            action: 'ro_train_paused_demand_drop',
+            zone: 'RO Train ' + t.id,
+            detail: 'Demand fell below threshold → pausing train, +' + saved + ' kWh saved'
+          });
+        }
+      },
+      // 11. Off-peak window opens → DesalSync ramps
+      () => {
+        if (hour >= 22 || hour < 6) {
+          const inactive = desalTrains.filter(t => !t.active);
+          if (inactive.length > 0) {
+            const t = choice(inactive);
+            t.active = true;
+            const saved = +rand(60, 140).toFixed(0);
+            counters.desal_energy_saved_kwh += saved;
+            counters.desal_cost_saved_egp += saved * 2.30;
+            pushDecision({
+              module: 'TideSync / DesalSync',
+              action: 'off_peak_load_shifted',
+              zone: 'RO Train ' + t.id,
+              detail: 'Off-peak window — ramping up at 1.95 EGP/kWh tariff, +' + saved + ' kWh shifted'
+            });
+          }
+        }
+      },
+      // 12. RVM bottle return spike
+      () => {
+        const b = choice(beachZones);
+        const burst = randInt(40, 120);
+        counters.bottles_recycled += burst;
+        counters.co2_avoided_kg += burst * 0.025 * 0.55;
+        pushDecision({
+          module: 'EcoSync',
+          action: 'rvm_burst_return',
+          zone: b.name,
+          detail: burst + ' bottles returned at promenade RVM cluster — EGP ' + (burst * 0.75).toFixed(0) + ' rewards issued'
+        });
+      }
+    ];
+    choice(events)();
+  }
+
+  function randInt(a, b) { return Math.floor(rand(a, b + 1)); }
+
   function tick() {
     simMinutes += 1;
     const hour = simHourFraction();
     const occ = occupancyFactor(hour);
     const beachOcc = beachDemand(hour);
+
+    // ===== LIVE EVENT ENGINE =====
+    // ~80% of ticks fire a dramatic, location-tagged event with a paired AI decision.
+    if (Math.random() < 0.8) triggerLiveEvent(hour, occ, beachOcc);
+    // ~30% of ticks fire a SECOND event (bursts of activity).
+    if (Math.random() < 0.3) triggerLiveEvent(hour, occ, beachOcc);
 
     let totalLoadKw = 0, totalSavedKwh = 0;
     zones.forEach(z => {
@@ -157,7 +361,7 @@
     counters.energy_cost_saved_egp += totalSavedKwh * 2.30;
     counters.co2_avoided_kg += totalSavedKwh * 0.51;
 
-    if (Math.random() < 0.25) {
+    if (Math.random() < 0.55) {
       const z = choice(zones);
       if (z.occupancy_pct < 25) {
         pushDecision({
@@ -175,13 +379,21 @@
           detail: 'Peak hour pre-cooling — shift load to off-peak window',
           saved_kwh: +(rand(2, 6)).toFixed(1)
         });
+      } else {
+        pushDecision({
+          module: 'EcoSync',
+          action: 'lighting_adapted',
+          zone: z.name,
+          detail: 'Lux sensors → lighting ' + z.lighting_pct + '%, HVAC ' + z.hvac_setpoint + '°C',
+          saved_kwh: +(rand(1, 4)).toFixed(1)
+        });
       }
     }
 
     const fillRate = (hour > 7 && hour < 22) ? 0.004 : 0.0008;
     bins.forEach(b => {
       b.fill = clamp(b.fill + rand(0, fillRate), 0, 1.0);
-      if (b.fill >= 0.85 && Math.random() < 0.10) {
+      if (b.fill >= 0.85 && Math.random() < 0.35) {
         b.fill = 0.05;
         b.full_count_today += 1;
         counters.diesel_saved_l += 12;
@@ -194,11 +406,6 @@
         });
       }
     });
-
-    if (Math.random() < 0.20) {
-      counters.truck_trips_cancelled += 1;
-      counters.diesel_saved_l += 25;
-    }
 
     const rvmRate = beachOcc * 8;
     counters.bottles_recycled += rvmRate;
