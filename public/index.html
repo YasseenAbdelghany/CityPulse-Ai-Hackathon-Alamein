@@ -1,0 +1,1095 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>CityPulse — Live Operations Dashboard</title>
+
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" />
+<script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+<style>
+  :root{
+    --bg:#0a1629; --bg-2:#0f2040; --panel:#122849; --panel-2:#16315a;
+    --border:#1f3d6b; --primary:#4cc3ff; --accent:#2dd4bf;
+    --warn:#fbbf24; --danger:#f87171; --success:#34d399;
+    --text:#e6eef9; --text-dim:#93a4be; --text-muted:#637393;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    font-family:'Segoe UI',-apple-system,system-ui,sans-serif;
+    background:radial-gradient(ellipse at top,var(--bg-2) 0%,var(--bg) 70%);
+    color:var(--text); overflow:hidden;
+  }
+  /* HEADER */
+  header{
+    height:60px; padding:0 24px;
+    display:flex; align-items:center; justify-content:space-between;
+    background:linear-gradient(90deg,#0b2244,#133263);
+    border-bottom:1px solid var(--border);
+    box-shadow:0 4px 12px rgba(0,0,0,.3); z-index:10;
+  }
+  .brand{display:flex; align-items:center; gap:14px}
+  .logo{
+    width:38px; height:38px; border-radius:10px;
+    background:conic-gradient(from 0deg,#4cc3ff,#2dd4bf,#4cc3ff);
+    display:flex; align-items:center; justify-content:center;
+    font-size:18px; font-weight:800; color:#0a1629;
+    box-shadow:0 0 20px rgba(76,195,255,.4);
+  }
+  .brand h1{font-size:17px; letter-spacing:.5px}
+  .brand h1 span{color:var(--accent); font-weight:400}
+  .brand .sub{font-size:10px; color:var(--text-dim); margin-top:2px}
+  .header-meta{display:flex; gap:22px; align-items:center}
+  .meta-item{display:flex; flex-direction:column; align-items:flex-end}
+  .meta-item .lbl{font-size:9px; color:var(--text-muted); text-transform:uppercase; letter-spacing:1px}
+  .meta-item .val{font-size:15px; font-weight:600; color:var(--accent); font-variant-numeric:tabular-nums}
+  .health-dot{
+    width:9px; height:9px; border-radius:50%; background:var(--success);
+    box-shadow:0 0 12px var(--success); animation:pulse 1.6s infinite;
+    display:inline-block; margin-right:6px;
+  }
+  @keyframes pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.25);opacity:.65}}
+
+  /* LAYOUT */
+  .layout{
+    display:grid; gap:12px; padding:12px;
+    grid-template-columns: 2fr 1fr;
+    grid-template-rows: auto 1.35fr 0.85fr;
+    height:calc(100vh - 60px);
+  }
+  .kpis{grid-column:1 / -1; display:grid; grid-template-columns:repeat(6,1fr); gap:10px}
+  .map-panel{grid-row:2; grid-column:1; padding:10px}
+  .right-stack{grid-row:2; grid-column:2; display:grid; grid-template-rows:1fr 1fr; gap:12px; min-height:0}
+  .bottom{grid-column:1 / -1; grid-row:3; display:grid; grid-template-columns:1.6fr 1.2fr 1fr; gap:12px; min-height:0}
+
+  /* KPI cards */
+  .kpi{
+    background:linear-gradient(135deg,var(--panel) 0%,var(--panel-2) 100%);
+    border:1px solid var(--border); border-radius:11px;
+    padding:11px 14px; position:relative; overflow:hidden;
+  }
+  .kpi::before{content:''; position:absolute; top:0; left:0; width:4px; height:100%; background:var(--primary)}
+  .kpi.eco::before{background:#34d399} .kpi.water::before{background:#4cc3ff}
+  .kpi.beach::before{background:#fbbf24} .kpi.co2::before{background:#a78bfa}
+  .kpi.bottles::before{background:#f472b6} .kpi.cash::before{background:#2dd4bf}
+  .kpi .lbl{font-size:10px; color:var(--text-muted); text-transform:uppercase; letter-spacing:.7px}
+  .kpi .val{font-size:22px; font-weight:700; margin-top:4px; font-variant-numeric:tabular-nums}
+  .kpi .unit{font-size:11px; color:var(--text-dim); margin-left:5px; font-weight:400}
+  .kpi .sub{font-size:10px; color:var(--text-dim); margin-top:3px}
+
+  .panel{
+    background:linear-gradient(135deg,var(--panel) 0%,var(--panel-2) 100%);
+    border:1px solid var(--border); border-radius:11px;
+    padding:12px; display:flex; flex-direction:column; overflow:hidden;
+  }
+  .panel-title{
+    display:flex; align-items:center; justify-content:space-between;
+    margin-bottom:10px; padding-bottom:8px; border-bottom:1px solid var(--border);
+  }
+  .panel-title h2{font-size:12px; text-transform:uppercase; letter-spacing:1px}
+  .panel-title .badge{
+    font-size:9px; padding:3px 8px; border-radius:10px;
+    background:rgba(76,195,255,.15); color:var(--primary); border:1px solid rgba(76,195,255,.3);
+  }
+  .panel-title .badge.green{background:rgba(52,211,153,.15); color:var(--success); border-color:rgba(52,211,153,.3)}
+
+  /* MAP */
+  .map-panel{position:relative}
+  #map{flex:1; border-radius:8px; overflow:hidden; min-height:0}
+  .maplibregl-canvas{outline:none}
+  .maplibregl-ctrl-bottom-right,.maplibregl-ctrl-bottom-left{display:none !important}
+  .map-hint{
+    position:absolute; bottom:18px; left:24px; z-index:5;
+    background:rgba(10,22,41,.85); border:1px solid var(--border);
+    border-radius:6px; padding:6px 12px; font-size:10px; color:var(--text-dim);
+    backdrop-filter:blur(8px); pointer-events:none;
+  }
+  .view-controls{
+    position:absolute; top:54px; right:24px; z-index:5;
+    display:flex; flex-direction:column; gap:6px;
+  }
+  .vc-btn{
+    background:rgba(10,22,41,.9); border:1px solid var(--border); color:var(--text);
+    padding:7px 11px; border-radius:6px; font-size:11px; cursor:pointer;
+    backdrop-filter:blur(8px); transition:all .15s;
+  }
+  .vc-btn:hover{background:var(--primary); color:#0a1629; border-color:var(--primary)}
+  .vc-btn.active{background:var(--accent); color:#0a1629; border-color:var(--accent)}
+
+  /* ZONE LABELS — pill-style floating tags above buildings */
+  .zone-label{
+    background:rgba(10,22,41,.88); color:#fff;
+    padding:4px 11px; border-radius:14px;
+    font-size:11px; font-weight:500; white-space:nowrap;
+    border:1px solid rgba(76,195,255,.45);
+    box-shadow:0 4px 14px rgba(0,0,0,.5);
+    pointer-events:none; user-select:none;
+    transition:opacity .3s;
+    backdrop-filter:blur(6px);
+    font-family:'Segoe UI',sans-serif;
+  }
+  .zone-label.hidden{opacity:0; pointer-events:none}
+  .zone-label .lbl-purpose{color:#fff; font-weight:600}
+  .zone-label .lbl-stats{color:var(--accent); font-size:10px; margin-left:4px; font-variant-numeric:tabular-nums}
+
+  /* CUSTOM HTML MARKERS (bins) */
+  .cp-marker{
+    width:24px; height:24px; border-radius:50%;
+    border:2px solid #0a1629; box-shadow:0 0 12px currentColor;
+    display:flex; align-items:center; justify-content:center;
+    font-size:10px; font-weight:700; color:#0a1629; cursor:pointer;
+    transition:transform .2s;
+  }
+  .cp-marker:hover{transform:scale(1.25)}
+
+  /* AI DECISION RIPPLE — animated visual effect when AI acts */
+  .ai-pulse{
+    position:relative; width:14px; height:14px; pointer-events:none;
+  }
+  .ai-pulse::before, .ai-pulse::after{
+    content:''; position:absolute; inset:0; border-radius:50%;
+    animation: ringExpand 3.2s cubic-bezier(0.2,0.6,0.3,1) forwards;
+  }
+  .ai-pulse::before{ background: var(--ring,#34d399); animation-delay:0s }
+  .ai-pulse::after { border:2px solid var(--ring,#34d399); animation-delay:.45s }
+  .ai-pulse .core{
+    position:absolute; inset:0; border-radius:50%;
+    background:var(--ring,#34d399);
+    box-shadow:0 0 22px 6px var(--ring,#34d399);
+    animation: coreFlash 1.6s ease-out forwards;
+  }
+  .ai-pulse .label{
+    position:absolute; left:18px; top:-6px;
+    background:rgba(10,22,41,.92);
+    color:#fff; font-size:10px; font-weight:600;
+    padding:3px 9px; border-radius:10px; white-space:nowrap;
+    border:1px solid var(--ring,#34d399);
+    animation: labelPop 3s ease-out forwards;
+    backdrop-filter:blur(6px);
+  }
+  @keyframes ringExpand{
+    0%   { transform:scale(0.6); opacity:.85 }
+    100% { transform:scale(7);   opacity:0   }
+  }
+  @keyframes coreFlash{
+    0%   { transform:scale(1);   opacity:1   }
+    100% { transform:scale(2.4); opacity:0   }
+  }
+  @keyframes labelPop{
+    0%   { opacity:0; transform: translateY(4px) }
+    15%  { opacity:1; transform: translateY(0)   }
+    80%  { opacity:1; transform: translateY(0)   }
+    100% { opacity:0; transform: translateY(-6px)}
+  }
+
+  /* MAPLIBRE POPUP */
+  .maplibregl-popup-content{
+    background:var(--panel); color:var(--text);
+    border:1px solid var(--border); border-radius:8px;
+    box-shadow:0 6px 24px rgba(0,0,0,.5); padding:10px 14px; font-size:11px;
+  }
+  .maplibregl-popup-content b{color:var(--accent)}
+  .maplibregl-popup-tip{border-top-color:var(--panel) !important}
+  .maplibregl-popup-close-button{color:var(--text-dim); font-size:16px; padding:4px 8px}
+
+  /* CHARTS */
+  .charts{display:grid; grid-template-rows:1fr 1fr; gap:10px; flex:1; min-height:0}
+  .chart-wrap{position:relative; min-height:0}
+
+  /* FEED */
+  .feed{flex:1; overflow-y:auto; padding-right:4px}
+  .feed::-webkit-scrollbar{width:6px}
+  .feed::-webkit-scrollbar-thumb{background:var(--border); border-radius:3px}
+  .feed-item{
+    padding:9px 11px; margin-bottom:7px;
+    background:rgba(255,255,255,.03);
+    border-left:3px solid var(--primary); border-radius:6px;
+    font-size:11px; line-height:1.45;
+    animation:slideIn .4s ease-out;
+  }
+  .feed-item.tide{border-left-color:var(--accent)}
+  .feed-item.beach{border-left-color:var(--warn)}
+  .feed-item.warn{border-left-color:var(--danger)}
+  .feed-item .head{display:flex; justify-content:space-between; margin-bottom:3px}
+  .feed-item .module{font-size:9px; text-transform:uppercase; letter-spacing:.6px; color:var(--accent); font-weight:600}
+  .feed-item .ts{font-size:9px; color:var(--text-muted); font-variant-numeric:tabular-nums}
+  .feed-item .action{font-weight:600; margin-bottom:2px}
+  .feed-item .detail{color:var(--text-dim); font-size:10.5px}
+  @keyframes slideIn{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
+
+  /* BEACH GRID */
+  .beach-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:7px; flex:1; overflow-y:auto}
+  .beach-card{background:rgba(255,255,255,.03); border:1px solid var(--border); border-radius:7px; padding:8px}
+  .beach-card .name{font-size:10.5px; font-weight:600; margin-bottom:5px}
+  .beach-card .row{display:flex; justify-content:space-between; font-size:9.5px; color:var(--text-dim); margin-top:3px}
+  .beach-card .row b{color:var(--text); font-variant-numeric:tabular-nums}
+  .occ-bar{height:5px; background:rgba(255,255,255,.08); border-radius:3px; overflow:hidden; margin-top:5px}
+  .occ-bar-fill{height:100%; transition:width .8s ease}
+  .quality-pill{display:inline-block; font-size:9px; padding:2px 6px; border-radius:4px; font-weight:600; margin-top:4px}
+  .quality-excellent{background:rgba(52,211,153,.2); color:var(--success)}
+  .quality-good{background:rgba(76,195,255,.2); color:var(--primary)}
+  .quality-caution{background:rgba(251,191,36,.2); color:var(--warn)}
+  .quality-closed{background:rgba(248,113,113,.2); color:var(--danger)}
+
+  /* TRAINS */
+  .train-row{
+    display:grid; grid-template-columns:auto 1fr auto; gap:8px; align-items:center;
+    padding:7px 9px; background:rgba(255,255,255,.03);
+    border:1px solid var(--border); border-radius:6px; margin-bottom:5px; font-size:10.5px;
+  }
+  .train-row .t-id{font-weight:700; color:var(--accent); font-size:12px}
+  .train-row .t-meta{font-size:9.5px; color:var(--text-dim); display:flex; gap:9px}
+  .train-row .t-meta b{color:var(--text); font-variant-numeric:tabular-nums}
+  .train-row .t-status{font-size:9px; font-weight:600; padding:3px 7px; border-radius:4px}
+  .t-active{background:rgba(52,211,153,.2); color:var(--success)}
+  .t-paused{background:rgba(159,168,180,.15); color:var(--text-dim)}
+  .t-alert{background:rgba(251,191,36,.2); color:var(--warn)}
+  .health-bar{height:3px; border-radius:2px; background:rgba(255,255,255,.08); overflow:hidden; margin-top:3px}
+  .health-bar-fill{height:100%; background:linear-gradient(90deg,#34d399,#fbbf24,#f87171)}
+
+  /* BINS */
+  .bin-row{
+    display:flex; justify-content:space-between; align-items:center;
+    padding:6px 9px; background:rgba(255,255,255,.03);
+    border:1px solid var(--border); border-radius:6px; margin-bottom:4px; font-size:10.5px;
+  }
+  .bin-row .bin-id{font-weight:600; font-family:'Consolas',monospace}
+  .bin-row .bin-fill{display:flex; align-items:center; gap:8px; flex:1; margin:0 12px}
+  .bin-row .bin-fill .bar{flex:1; height:5px; background:rgba(255,255,255,.08); border-radius:3px; overflow:hidden}
+  .bin-row .bin-fill .bar-in{height:100%; transition:width .8s ease}
+  .bin-row .pct{min-width:34px; text-align:right; color:var(--text-dim); font-variant-numeric:tabular-nums}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <div class="logo">CP</div>
+    <div>
+      <h1>CityPulse <span>· EcoSync + TideSync</span></h1>
+      <div class="sub">AI-Powered Smart Coastal City OS · New Alamein Pilot</div>
+    </div>
+  </div>
+  <div class="header-meta">
+    <div class="meta-item"><div class="lbl">Sim Clock</div><div class="val" id="simClock">--:--</div></div>
+    <div class="meta-item"><div class="lbl">Active Units</div><div class="val">8,000</div></div>
+    <div class="meta-item"><div class="lbl">AI Decisions</div><div class="val" id="decisionsCount">0</div></div>
+    <div class="meta-item"><div class="lbl">System</div><div class="val"><span class="health-dot"></span>NOMINAL</div></div>
+  </div>
+</header>
+
+<div class="layout">
+  <!-- KPIs -->
+  <div class="kpis">
+    <div class="kpi eco">
+      <div class="lbl">Energy Saved (live)</div>
+      <div class="val" id="kpi-energy">0<span class="unit">kWh</span></div>
+      <div class="sub">EcoSync HVAC + lighting</div>
+    </div>
+    <div class="kpi water">
+      <div class="lbl">Desal Energy Saved</div>
+      <div class="val" id="kpi-desal">0<span class="unit">kWh</span></div>
+      <div class="sub">TideSync schedule shift</div>
+    </div>
+    <div class="kpi co2">
+      <div class="lbl">CO₂ Avoided</div>
+      <div class="val" id="kpi-co2">0<span class="unit">kg</span></div>
+      <div class="sub">All modules combined</div>
+    </div>
+    <div class="kpi cash">
+      <div class="lbl">EGP Saved (live)</div>
+      <div class="val" id="kpi-egp">0<span class="unit">EGP</span></div>
+      <div class="sub">Energy + desal + revenue</div>
+    </div>
+    <div class="kpi bottles">
+      <div class="lbl">Bottles Recycled</div>
+      <div class="val" id="kpi-bottles">0</div>
+      <div class="sub">RVM network · 40 units</div>
+    </div>
+    <div class="kpi beach">
+      <div class="lbl">Truck Trips Cancelled</div>
+      <div class="val" id="kpi-trucks">0</div>
+      <div class="sub" id="kpi-diesel">0 L diesel saved</div>
+    </div>
+  </div>
+
+  <!-- BIG 3D MAP -->
+  <div class="panel map-panel">
+    <div class="panel-title">
+      <h2>🗺  New Alamein · Live 3D Operations Map</h2>
+      <div class="badge">windowed buildings · live AI ripples · zoom-in for detail</div>
+    </div>
+    <div id="map"></div>
+    <div class="view-controls">
+      <button class="vc-btn" id="view2d">2D</button>
+      <button class="vc-btn active" id="view3d">3D</button>
+      <button class="vc-btn" id="viewFly">▶ flyover</button>
+      <button class="vc-btn" id="viewReset">⟲ reset</button>
+    </div>
+    <div class="map-hint">Right-click + drag to rotate · Ctrl + drag to tilt · Scroll to zoom · Click any building for live data</div>
+  </div>
+
+  <!-- RIGHT: Charts + Feed -->
+  <div class="right-stack">
+    <div class="panel">
+      <div class="panel-title">
+        <h2>📈 Real-Time Energy & Water</h2>
+        <div class="badge green">live</div>
+      </div>
+      <div class="charts">
+        <div class="chart-wrap"><canvas id="energyChart"></canvas></div>
+        <div class="chart-wrap"><canvas id="waterChart"></canvas></div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">
+        <h2>🧠 AI Decision Stream</h2>
+        <div class="badge green" id="feedBadge">live</div>
+      </div>
+      <div class="feed" id="feed"></div>
+    </div>
+  </div>
+
+  <!-- BOTTOM ROW -->
+  <div class="bottom">
+    <div class="panel">
+      <div class="panel-title">
+        <h2>🏖 Beach Zones · Live Occupancy & Water Quality</h2>
+        <div class="badge">BeachPulse + AquaGuard</div>
+      </div>
+      <div class="beach-grid" id="beachGrid"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">
+        <h2>💧 Desalination · 4 RO Trains</h2>
+        <div class="badge" id="desalActive">— active</div>
+      </div>
+      <div id="trainsList"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">
+        <h2>🗑 Smart Bins</h2>
+        <div class="badge">EcoSync routing</div>
+      </div>
+      <div id="binsList"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================================
+// 3D MAP — windowed buildings + zone labels + AI decision ripples
+// ============================================================================
+
+// Building metadata: heights, footprint, purpose label
+const STRUCTURES = {
+  zone_north_edge_A1:  { height: 130, sizeM: 26, purpose: 'Residential'  },
+  zone_north_edge_B3:  { height: 115, sizeM: 24, purpose: 'Residential'  },
+  zone_gate_t1:        { height: 145, sizeM: 28, purpose: 'Mixed-Use'    },
+  zone_gate_t4:        { height: 138, sizeM: 26, purpose: 'Hotel Tower'  },
+  zone_downtown_plaza: { height:  35, sizeM: 50, purpose: 'Plaza · Retail' },
+  zone_mazarine_M2:    { height:  55, sizeM: 32, purpose: 'Hotel Apts'   },
+  zone_latin_L1:       { height:  48, sizeM: 30, purpose: 'Residential'  },
+  zone_promenade_PR3:  { height:   6, sizeM: 60, purpose: 'Promenade'    }
+};
+
+// Build a square polygon centered at lat/lon, size in meters
+function squarePolygon(lat, lon, sizeM) {
+  const dLat = (sizeM / 2) / 111000;
+  const dLon = (sizeM / 2) / (111000 * Math.cos(lat * Math.PI / 180));
+  return [[
+    [lon - dLon, lat - dLat],
+    [lon + dLon, lat - dLat],
+    [lon + dLon, lat + dLat],
+    [lon - dLon, lat + dLat],
+    [lon - dLon, lat - dLat]
+  ]];
+}
+
+// MapLibre style: dark Carto raster basemap (no API key)
+const mapStyle = {
+  version: 8,
+  sources: {
+    'carto-dark': {
+      type: 'raster',
+      tiles: [
+        'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png',
+        'https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png',
+        'https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png',
+        'https://d.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png'
+      ],
+      tileSize: 256,
+      attribution: '© OpenStreetMap · © CARTO'
+    }
+  },
+  layers: [{ id: 'carto-dark', type: 'raster', source: 'carto-dark' }]
+};
+
+const map = new maplibregl.Map({
+  container: 'map',
+  style: mapStyle,
+  center: [28.965, 30.836],
+  zoom: 14.2,
+  pitch: 55,
+  bearing: -22,
+  antialias: true,
+  maxPitch: 80
+});
+map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-left');
+
+// State caches
+const cached = { zones: [], beaches: [], bins: [], marine: [] };
+const zoneLabelMarkers = {};
+const binMarkers = {};
+
+// ----------------------------------------------------------------------------
+// MAP LAYERS — created on style load
+// ----------------------------------------------------------------------------
+map.on('load', () => {
+  // Buildings (multi-band: walls + glowing windows)
+  map.addSource('buildings', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  map.addLayer({
+    id: 'buildings-3d',
+    type: 'fill-extrusion',
+    source: 'buildings',
+    paint: {
+      'fill-extrusion-color': ['get', 'color'],
+      'fill-extrusion-base': ['get', 'bottom'],
+      'fill-extrusion-height': ['get', 'top'],
+      'fill-extrusion-opacity': 0.94,
+      'fill-extrusion-vertical-gradient': true
+    }
+  });
+
+  // Beach platforms (low extrusions colored by occupancy)
+  map.addSource('beaches', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  map.addLayer({
+    id: 'beaches-3d',
+    type: 'fill-extrusion',
+    source: 'beaches',
+    paint: {
+      'fill-extrusion-color': ['get', 'color'],
+      'fill-extrusion-height': ['get', 'height'],
+      'fill-extrusion-base': 0,
+      'fill-extrusion-opacity': 0.55
+    }
+  });
+
+  // Desalination plant (purple block)
+  map.addSource('desal', {
+    type: 'geojson',
+    data: {
+      type: 'Feature',
+      geometry: { type: 'Polygon', coordinates: squarePolygon(30.847, 28.935, 90) },
+      properties: { color: '#a78bfa', height: 22 }
+    }
+  });
+  map.addLayer({
+    id: 'desal-3d',
+    type: 'fill-extrusion',
+    source: 'desal',
+    paint: {
+      'fill-extrusion-color': '#a78bfa',
+      'fill-extrusion-height': 22,
+      'fill-extrusion-base': 0,
+      'fill-extrusion-opacity': 0.85
+    }
+  });
+
+  // Coastline dashed line
+  map.addSource('coast', {
+    type: 'geojson',
+    data: {
+      type: 'Feature', properties: {},
+      geometry: {
+        type: 'LineString',
+        coordinates: [
+          [28.940,30.846],[28.960,30.840],[28.975,30.836],[28.990,30.831],[29.005,30.825]
+        ]
+      }
+    }
+  });
+  map.addLayer({
+    id: 'coast-line',
+    type: 'line',
+    source: 'coast',
+    paint: { 'line-color': '#4cc3ff', 'line-width': 3, 'line-opacity': 0.55, 'line-dasharray': [2, 2] }
+  });
+
+  // Building click → popup (EcoSync)
+  map.on('click', 'buildings-3d', e => {
+    if (!e.features.length) return;
+    const p = e.features[0].properties;
+    new maplibregl.Popup({ closeButton: true })
+      .setLngLat(e.lngLat)
+      .setHTML(`
+        <div style="font-size:9px;color:#34d399;text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">EcoSync · Building</div>
+        <b>${p.name}</b> <span style="opacity:.7">· ${p.purpose}</span><br>
+        Occupancy: <b>${p.occupancy_pct}%</b> (${p.current_count}/${p.capacity})<br>
+        Load: <b>${p.current_kw} kW</b> · saving <b>${p.savings_pct}%</b><br>
+        HVAC: ${p.hvac_setpoint}°C · Lights: ${p.lighting_pct}%
+      `)
+      .addTo(map);
+  });
+  map.on('mouseenter', 'buildings-3d', () => map.getCanvas().style.cursor = 'pointer');
+  map.on('mouseleave', 'buildings-3d', () => map.getCanvas().style.cursor = '');
+
+  // Beach click → popup (TideSync · BeachPulse + AquaGuard)
+  map.on('click', 'beaches-3d', e => {
+    if (!e.features.length) return;
+    const p = e.features[0].properties;
+    const ratingColor =
+      p.swimming_rating === 'excellent' ? '#34d399' :
+      p.swimming_rating === 'good'      ? '#4cc3ff' :
+      p.swimming_rating === 'caution'   ? '#fbbf24' : '#f87171';
+    const surgeColor = parseFloat(p.surge) >= 1.5 ? '#fbbf24' : '#93a4be';
+    new maplibregl.Popup({ closeButton: true })
+      .setLngLat(e.lngLat)
+      .setHTML(`
+        <div style="font-size:9px;color:#4cc3ff;text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">TideSync · Beach Zone</div>
+        <b>${p.name}</b><br>
+        Occupancy: <b>${p.occupancy_pct}%</b> (${p.current_count}/${p.capacity})<br>
+        Tier: <b>${p.tier}</b> · Price: <b>EGP ${p.price_egp}</b>
+        <span style="color:${surgeColor}">×${p.surge}</span><br>
+        <div style="margin-top:6px;padding-top:5px;border-top:1px solid #1f3d6b">
+          <div style="font-size:9px;color:#a78bfa;text-transform:uppercase;letter-spacing:.6px;margin-bottom:3px">AquaGuard · Water</div>
+          Temp: <b>${p.water_temp}°C</b> · pH: <b>${p.water_ph}</b><br>
+          DO: <b>${p.do_mg_l} mg/L</b> · Turb: <b>${p.turbidity} NTU</b><br>
+          Chl-a: <b>${p.chlorophyll} μg/L</b><br>
+          Swim Safety: <b style="color:${ratingColor}">${p.swimming_rating} · ${p.swimming_score}/5</b>
+        </div>
+      `)
+      .addTo(map);
+  });
+  map.on('mouseenter', 'beaches-3d', () => map.getCanvas().style.cursor = 'pointer');
+  map.on('mouseleave', 'beaches-3d', () => map.getCanvas().style.cursor = '');
+
+  // Desal plant click → popup (TideSync · DesalSync)
+  map.on('click', 'desal-3d', e => {
+    const trains = cached.desalTrains || [];
+    const active = trains.filter(t => t.active).length;
+    const trainHtml = trains.map(t => {
+      const status = t.alert ? `<span style="color:#fbbf24">ALERT</span>` :
+                     t.active ? `<span style="color:#34d399">ACTIVE</span>` :
+                     `<span style="opacity:.6">PAUSED</span>`;
+      return `<div style="display:flex;justify-content:space-between;font-size:10px;margin-top:2px">
+        <span>RO #${t.id}</span>
+        <span>${t.pressure.toFixed(1)} bar · ${t.flow} m³/h</span>
+        <span>${status}</span>
+      </div>`;
+    }).join('');
+    new maplibregl.Popup({ closeButton: true, maxWidth: '320px' })
+      .setLngLat(e.lngLat)
+      .setHTML(`
+        <div style="font-size:9px;color:#a78bfa;text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">TideSync · DesalSync</div>
+        <b>Desalination Plant · Phase 1</b><br>
+        Capacity: 150,000 m³/day · 4× SWRO trains<br>
+        Active: <b>${active}/4 trains</b><br>
+        ${trainHtml}
+        <div style="margin-top:6px;padding-top:5px;border-top:1px solid #1f3d6b;font-size:10px;color:#93a4be">
+          AI demand-matched scheduling · off-peak shift active
+        </div>
+      `)
+      .addTo(map);
+  });
+  map.on('mouseenter', 'desal-3d', () => map.getCanvas().style.cursor = 'pointer');
+  map.on('mouseleave', 'desal-3d', () => map.getCanvas().style.cursor = '');
+
+  // Slow cinematic intro fly-in (8 seconds)
+  setTimeout(() => {
+    map.flyTo({
+      center: [28.965, 30.836], zoom: 14.6, pitch: 62, bearing: 8,
+      duration: 8000, curve: 1.4, easing: t => t, essential: true
+    });
+  }, 700);
+});
+
+// Refresh label visibility based on zoom
+map.on('zoom', updateLabelVisibility);
+function updateLabelVisibility() {
+  const z = map.getZoom();
+  const visible = z >= 14.6;
+  Object.values(zoneLabelMarkers).forEach(m => {
+    m.getElement().classList.toggle('hidden', !visible);
+  });
+}
+
+// ----------------------------------------------------------------------------
+// VIEW CONTROL BUTTONS
+// ----------------------------------------------------------------------------
+document.getElementById('view2d').addEventListener('click', () => {
+  if (flyoverActive) stopFlyover();
+  setActiveView('view2d');
+  map.easeTo({ pitch: 0, bearing: 0, duration: 2200 });
+});
+document.getElementById('view3d').addEventListener('click', () => {
+  if (flyoverActive) stopFlyover();
+  setActiveView('view3d');
+  map.easeTo({ pitch: 60, bearing: -22, duration: 2200 });
+});
+document.getElementById('viewReset').addEventListener('click', () => {
+  if (flyoverActive) stopFlyover();
+  setActiveView('view3d');
+  map.easeTo({ center: [28.965, 30.836], zoom: 14.2, pitch: 55, bearing: -22, duration: 2400 });
+});
+// Flyover state — togglable on/off
+let flyoverActive = false;
+let flyoverFrameId = null;
+let flyoverTimeoutId = null;
+
+function stopFlyover() {
+  flyoverActive = false;
+  if (flyoverFrameId) { cancelAnimationFrame(flyoverFrameId); flyoverFrameId = null; }
+  if (flyoverTimeoutId) { clearTimeout(flyoverTimeoutId); flyoverTimeoutId = null; }
+  const btn = document.getElementById('viewFly');
+  btn.textContent = '▶ flyover';
+  setActiveView('view3d');
+}
+
+document.getElementById('viewFly').addEventListener('click', () => {
+  if (flyoverActive) { stopFlyover(); return; }
+  flyoverActive = true;
+  setActiveView('viewFly');
+  document.getElementById('viewFly').textContent = '■ stop';
+
+  // Cinematic SLOW endless 360° tour — keeps spinning until stopped
+  let bearing = map.getBearing();
+  function spin(){
+    if (!flyoverActive) return;
+    bearing += 0.18;       // slow rotation
+    map.setBearing(bearing);
+    flyoverFrameId = requestAnimationFrame(spin);
+  }
+  map.easeTo({ pitch: 65, zoom: 14.8, duration: 1800 });
+  flyoverTimeoutId = setTimeout(() => { if (flyoverActive) spin(); }, 1800);
+});
+function setActiveView(id) {
+  ['view2d','view3d','viewFly','viewReset'].forEach(x => {
+    const el = document.getElementById(x);
+    if (el) el.classList.toggle('active', x === id);
+  });
+}
+
+// ----------------------------------------------------------------------------
+// BUILDING COLOR — based on AI savings %
+// ----------------------------------------------------------------------------
+function buildingColor(savingsPct) {
+  if (savingsPct == null) return '#4cc3ff';
+  if (savingsPct > 38) return '#10b981';   // strong green — heavy AI savings
+  if (savingsPct > 25) return '#1ea672';   // teal-green
+  if (savingsPct > 15) return '#d97706';   // amber — moderate
+  return '#dc2626';                         // red — barely saving
+}
+
+// Build banded geometry: alternating wall slabs + glowing window strips.
+// Produces the windowed-tower look in the user's reference image.
+function buildBandedFeatures(z) {
+  const meta = STRUCTURES[z.id] || { height: 60, sizeM: 25, purpose: 'Building' };
+  const H = meta.height;
+  const sz = meta.sizeM;
+  const baseColor = buildingColor(z.savings_pct);
+  const winColor  = '#fbbf24';
+  const features = [];
+
+  const common = {
+    zone_id: z.id, name: z.name, purpose: meta.purpose,
+    capacity: z.capacity, current_count: z.current_count,
+    occupancy_pct: z.occupancy_pct ? Math.round(z.occupancy_pct) : 0,
+    current_kw: z.current_kw, savings_pct: z.savings_pct,
+    hvac_setpoint: z.hvac_setpoint, lighting_pct: z.lighting_pct
+  };
+
+  if (H < 20) {
+    // Short structure — single block
+    features.push({
+      type: 'Feature',
+      geometry: { type: 'Polygon', coordinates: squarePolygon(z.lat, z.lon, sz) },
+      properties: { ...common, color: baseColor, bottom: 0, top: H }
+    });
+    return features;
+  }
+
+  // Tall tower — alternate wall + thin window band per floor
+  const floorH   = 11;                              // metres per floor
+  const winRatio = 0.18;                            // window band is 18% of each floor height
+  const floors   = Math.max(3, Math.floor(H / floorH));
+  const polyMain = squarePolygon(z.lat, z.lon, sz);
+
+  for (let i = 0; i < floors; i++) {
+    const bottom = i * floorH;
+    const wallTop = bottom + floorH * (1 - winRatio);
+    const winTop  = bottom + floorH;
+    // Wall slab
+    features.push({
+      type: 'Feature',
+      geometry: { type: 'Polygon', coordinates: polyMain },
+      properties: { ...common, color: baseColor, bottom, top: wallTop }
+    });
+    // Window band — slightly larger so it visually protrudes
+    features.push({
+      type: 'Feature',
+      geometry: { type: 'Polygon', coordinates: squarePolygon(z.lat, z.lon, sz + 0.6) },
+      properties: { ...common, color: winColor, bottom: wallTop, top: winTop }
+    });
+  }
+  // Roof cap
+  features.push({
+    type: 'Feature',
+    geometry: { type: 'Polygon', coordinates: polyMain },
+    properties: { ...common, color: baseColor, bottom: floors * floorH, top: H }
+  });
+
+  return features;
+}
+
+function updateBuildings(zones) {
+  if (!map.getSource || !map.getSource('buildings')) return;
+  const features = [];
+  zones.forEach(z => features.push(...buildBandedFeatures(z)));
+  map.getSource('buildings').setData({ type: 'FeatureCollection', features });
+}
+
+function updateBeaches3D(beachZones, marineStations) {
+  if (!map.getSource || !map.getSource('beaches')) return;
+  const features = beachZones.map(b => {
+    const color = b.occupancy_pct > 80 ? '#f87171' : b.occupancy_pct > 60 ? '#fbbf24' : '#4cc3ff';
+    const m = (marineStations || []).find(x => x.zone_id === b.id) || {};
+    return {
+      type: 'Feature',
+      geometry: { type: 'Polygon', coordinates: squarePolygon(b.lat, b.lon, 80) },
+      properties: {
+        color, height: 4 + b.occupancy_pct * 0.15,
+        zone_id: b.id, name: b.name,
+        capacity: b.capacity, current_count: b.current_count,
+        occupancy_pct: Math.round(b.occupancy_pct),
+        price_egp: b.price_egp, surge: b.surge.toFixed(1), tier: b.tier,
+        water_temp: m.temperature != null ? m.temperature.toFixed(1) : '—',
+        water_ph: m.ph != null ? m.ph.toFixed(2) : '—',
+        chlorophyll: m.chlorophyll_a != null ? m.chlorophyll_a.toFixed(2) : '—',
+        do_mg_l: m.dissolved_oxygen != null ? m.dissolved_oxygen.toFixed(2) : '—',
+        turbidity: m.turbidity != null ? m.turbidity.toFixed(2) : '—',
+        swimming_score: m.swimming_score != null ? m.swimming_score : '—',
+        swimming_rating: m.swimming_rating || '—'
+      }
+    };
+  });
+  map.getSource('beaches').setData({ type: 'FeatureCollection', features });
+}
+
+// ----------------------------------------------------------------------------
+// ZONE LABELS — pill markers above each tower
+// ----------------------------------------------------------------------------
+function ensureZoneLabels(zones) {
+  zones.forEach(z => {
+    if (zoneLabelMarkers[z.id]) {
+      // Update stats text
+      const el = zoneLabelMarkers[z.id].getElement();
+      const meta = STRUCTURES[z.id];
+      const stats = z.savings_pct != null ? `−${Math.round(z.savings_pct)}%` : '';
+      el.innerHTML = `<span class="lbl-purpose">${meta?.purpose || 'Building'}</span><span class="lbl-stats">${stats}</span>`;
+      return;
+    }
+    const meta = STRUCTURES[z.id] || { purpose: 'Building' };
+    const el = document.createElement('div');
+    el.className = 'zone-label hidden';
+    el.innerHTML = `<span class="lbl-purpose">${meta.purpose}</span>`;
+    const mk = new maplibregl.Marker({ element: el, anchor: 'bottom', offset: [0, -8] })
+      .setLngLat([z.lon, z.lat])
+      .addTo(map);
+    zoneLabelMarkers[z.id] = mk;
+  });
+  updateLabelVisibility();
+}
+
+// ----------------------------------------------------------------------------
+// BIN MARKERS
+// ----------------------------------------------------------------------------
+function ensureBinMarkers(bins) {
+  bins.forEach(b => {
+    if (!binMarkers[b.id]) {
+      const el = document.createElement('div');
+      el.className = 'cp-marker';
+      el.style.background = '#fbbf24';
+      el.textContent = 'W';
+      const popup = new maplibregl.Popup({ offset: 14 }).setHTML(`<b>${b.id.toUpperCase()}</b><br>Smart Waste Bin`);
+      const mk = new maplibregl.Marker({ element: el }).setLngLat([b.lon, b.lat]).setPopup(popup).addTo(map);
+      binMarkers[b.id] = { mk, el, popup };
+    }
+    const pct = Math.round(b.fill * 100);
+    const color = pct > 85 ? '#f87171' : pct > 60 ? '#fbbf24' : '#34d399';
+    binMarkers[b.id].el.style.background = color;
+    binMarkers[b.id].popup.setHTML(`<b>${b.id.toUpperCase()}</b><br>Fill: <b>${pct}%</b><br>Trips today: ${b.full_count_today}`);
+  });
+}
+
+// ----------------------------------------------------------------------------
+// AI DECISION VISUAL — animated ripple at the affected zone
+// ----------------------------------------------------------------------------
+function findDecisionLocation(d) {
+  // Match by zone name from cached state
+  if (!d.zone) return null;
+  const zone = String(d.zone);
+  const z = cached.zones.find(x => x.name === zone);
+  if (z) return { lng: z.lon, lat: z.lat, kind: 'zone' };
+  const b = cached.beaches.find(x => x.name === zone);
+  if (b) return { lng: b.lon, lat: b.lat, kind: 'beach' };
+  if (zone.toLowerCase().startsWith('bin ')) {
+    const id = zone.substring(4).toLowerCase();
+    const bin = cached.bins.find(x => x.id.toLowerCase() === id);
+    if (bin) return { lng: bin.lon, lat: bin.lat, kind: 'bin' };
+  }
+  if (zone.toLowerCase().includes('ro train') || zone.toLowerCase().includes('desalination')) {
+    return { lng: 28.935, lat: 30.847, kind: 'desal' };
+  }
+  return null;
+}
+
+function pulseColorFor(d) {
+  const a = (d.action || '');
+  if (a.includes('warning') || a.includes('alert')) return '#f87171';
+  if ((d.module || '').includes('TideSync')) return '#4cc3ff';
+  if ((d.module || '').includes('BeachPulse')) return '#fbbf24';
+  return '#34d399';
+}
+
+function shortLabelFor(d) {
+  const a = (d.action || '').replace(/_/g, ' ');
+  if (a.length > 28) return a.slice(0, 26) + '…';
+  return a;
+}
+
+function spawnDecisionPulse(d) {
+  const loc = findDecisionLocation(d);
+  if (!loc) return;
+  const color = pulseColorFor(d);
+  const wrap = document.createElement('div');
+  wrap.className = 'ai-pulse';
+  wrap.style.setProperty('--ring', color);
+  wrap.innerHTML = `<span class="core"></span><span class="label">⚡ ${shortLabelFor(d)}</span>`;
+  const mk = new maplibregl.Marker({ element: wrap, anchor: 'center' })
+    .setLngLat([loc.lng, loc.lat])
+    .addTo(map);
+  // Auto-cleanup after animation
+  setTimeout(() => { try { mk.remove(); } catch(e){} }, 3300);
+}
+
+// ============================================================================
+// CHARTS
+// ============================================================================
+Chart.defaults.color = '#93a4be';
+Chart.defaults.borderColor = '#1f3d6b';
+Chart.defaults.font.family = 'Segoe UI, sans-serif';
+
+const N = 60;
+const labels = Array.from({length: N}, () => '');
+
+const energyChart = new Chart(document.getElementById('energyChart'), {
+  type: 'line',
+  data: { labels, datasets: [
+    { label: 'Total Load (kW)', data: Array(N).fill(null),
+      borderColor: '#34d399', backgroundColor: 'rgba(52,211,153,.15)',
+      borderWidth: 2, tension: 0.4, fill: true, pointRadius: 0 }
+  ]},
+  options: {
+    responsive: true, maintainAspectRatio: false, animation: false,
+    plugins: { legend: { display: true, position: 'top', labels:{boxWidth:10,font:{size:9}} } },
+    scales: {
+      x: { display: false, grid:{display:false} },
+      y: { ticks:{font:{size:9}}, grid:{color:'rgba(255,255,255,.04)'} }
+    }
+  }
+});
+
+const waterChart = new Chart(document.getElementById('waterChart'), {
+  type: 'line',
+  data: { labels, datasets: [
+    { label: 'Water Demand (m³/h)', data: Array(N).fill(null),
+      borderColor: '#4cc3ff', backgroundColor: 'rgba(76,195,255,.15)',
+      borderWidth: 2, tension: 0.4, fill: true, pointRadius: 0, yAxisID: 'y' },
+    { label: 'Active RO Trains', data: Array(N).fill(null),
+      borderColor: '#fbbf24', backgroundColor: 'transparent',
+      borderWidth: 2, tension: 0, stepped: true, pointRadius: 0, yAxisID: 'y2' }
+  ]},
+  options: {
+    responsive: true, maintainAspectRatio: false, animation: false,
+    plugins: { legend: { display:true, position:'top', labels:{boxWidth:10,font:{size:9}} } },
+    scales: {
+      x: { display:false, grid:{display:false} },
+      y:  { position:'left',  ticks:{font:{size:9}}, grid:{color:'rgba(255,255,255,.04)'} },
+      y2: { position:'right', min:0, max:4, ticks:{stepSize:1, font:{size:9}}, grid:{display:false} }
+    }
+  }
+});
+
+function pushChart(chart, idx, value) {
+  const d = chart.data.datasets[idx].data;
+  d.push(value); if (d.length > N) d.shift();
+  chart.update('none');
+}
+
+// ============================================================================
+// WEBSOCKET
+// ============================================================================
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(`${proto}//${location.host}/live`);
+  ws.onopen = () => console.log('[CityPulse] connected');
+  ws.onclose = () => { console.log('[CityPulse] reconnecting…'); setTimeout(connectWS, 1000); };
+  ws.onmessage = e => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'hello') {
+      cached.zones = msg.payload.zones || [];
+      cached.beaches = msg.payload.beachZones || [];
+      cached.bins = msg.payload.bins || [];
+      cached.marine = msg.payload.marineStations || [];
+      cached.desalTrains = msg.payload.desalTrains || [];
+      msg.payload.decisions.forEach(d => addDecisionToFeed(d, false));
+      const tryInit = () => {
+        if (!map.isStyleLoaded()) { setTimeout(tryInit, 100); return; }
+        ensureBinMarkers(cached.bins);
+        ensureZoneLabels(cached.zones);
+      };
+      tryInit();
+    } else if (msg.type === 'tick') {
+      const p = msg.payload;
+      cached.zones = p.zones; cached.beaches = p.beachZones;
+      cached.bins = p.bins; cached.marine = p.marineStations;
+      cached.desalTrains = p.desalTrains || [];
+
+      document.getElementById('simClock').textContent = p.sim_clock;
+      document.getElementById('decisionsCount').textContent = p.counters.decisions_total.toLocaleString();
+      setKpi('kpi-energy', p.counters.energy_saved_kwh, 'kWh');
+      setKpi('kpi-desal',  p.counters.desal_energy_saved_kwh, 'kWh');
+      setKpi('kpi-co2',    p.counters.co2_avoided_kg, 'kg');
+      setKpi('kpi-egp',    p.counters.total_egp_saved, 'EGP');
+      setKpi('kpi-bottles',p.counters.bottles_recycled, '');
+      setKpi('kpi-trucks', p.counters.truck_trips_cancelled, '');
+      document.getElementById('kpi-diesel').textContent = `${p.counters.diesel_saved_l.toLocaleString()} L diesel saved`;
+      pushChart(energyChart, 0, p.total_load_kw);
+      pushChart(waterChart, 0, p.water_demand_m3h);
+      pushChart(waterChart, 1, p.desal_active_trains);
+      renderBeaches(p.beachZones, p.marineStations);
+      renderTrains(p.desalTrains);
+      renderBins(p.bins);
+      document.getElementById('desalActive').textContent =
+        `${p.desal_active_trains}/4 active · ${p.desal_energy_mw.toFixed(1)} MW`;
+      if (map.isStyleLoaded()) {
+        updateBuildings(p.zones);
+        updateBeaches3D(p.beachZones, p.marineStations);
+        ensureBinMarkers(p.bins);
+        ensureZoneLabels(p.zones);
+      }
+    } else if (msg.type === 'decision') {
+      addDecisionToFeed(msg.payload, true);
+      // Visual ripple on the map
+      if (map.isStyleLoaded()) spawnDecisionPulse(msg.payload);
+    }
+  };
+}
+connectWS();
+
+// ============================================================================
+// HELPERS
+// ============================================================================
+function setKpi(id, value, unit) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.innerHTML = `${Number(value).toLocaleString()}${unit ? `<span class="unit">${unit}</span>` : ''}`;
+}
+
+function addDecisionToFeed(d, animate) {
+  const feed = document.getElementById('feed');
+  const item = document.createElement('div');
+  let cls = 'feed-item';
+  if (d.module && d.module.includes('TideSync')) cls += ' tide';
+  if (d.module && d.module.includes('BeachPulse')) cls += ' beach';
+  if (d.action && (d.action.includes('warning') || d.action.includes('alert'))) cls += ' warn';
+  item.className = cls;
+  if (!animate) item.style.animation = 'none';
+  const action = (d.action || '').replace(/_/g, ' ');
+  const saved =
+    d.saved_kwh ? ` <b style="color:#34d399">+${d.saved_kwh} kWh</b>` :
+    d.saved_l_diesel ? ` <b style="color:#34d399">+${d.saved_l_diesel} L diesel</b>` : '';
+  item.innerHTML = `
+    <div class="head">
+      <span class="module">${d.module || 'CityPulse'}</span>
+      <span class="ts">${d.sim_clock || ''}</span>
+    </div>
+    <div class="action">${action}${saved}</div>
+    <div class="detail">${d.zone ? `<b style="color:#4cc3ff">${d.zone}</b> — ` : ''}${d.detail || ''}</div>
+  `;
+  feed.insertBefore(item, feed.firstChild);
+  while (feed.children.length > 40) feed.removeChild(feed.lastChild);
+}
+
+function renderBeaches(beaches, marine) {
+  const grid = document.getElementById('beachGrid');
+  grid.innerHTML = '';
+  beaches.forEach(b => {
+    const m = marine.find(x => x.zone_id === b.id) || {};
+    const occColor = b.occupancy_pct > 80 ? '#f87171' : b.occupancy_pct > 60 ? '#fbbf24' : '#34d399';
+    const qualityClass =
+      m.swimming_rating === 'excellent' ? 'quality-excellent' :
+      m.swimming_rating === 'good' ? 'quality-good' :
+      m.swimming_rating === 'caution' ? 'quality-caution' : 'quality-closed';
+    const card = document.createElement('div');
+    card.className = 'beach-card';
+    card.innerHTML = `
+      <div class="name">${b.name}</div>
+      <div class="row"><span>Occupancy</span><b>${b.current_count}/${b.capacity}</b></div>
+      <div class="occ-bar"><div class="occ-bar-fill" style="width:${b.occupancy_pct}%;background:${occColor}"></div></div>
+      <div class="row"><span>Price</span><b>EGP ${b.price_egp}</b><span style="color:${b.surge>=1.5?'#fbbf24':'var(--text-dim)'}">×${b.surge.toFixed(1)}</span></div>
+      <div class="row"><span>Water</span><b>${(m.temperature||0).toFixed(1)}°C · pH ${(m.ph||0).toFixed(2)}</b></div>
+      <span class="quality-pill ${qualityClass}">${m.swimming_rating || '—'} · ${m.swimming_score || '—'}/5</span>
+    `;
+    grid.appendChild(card);
+  });
+}
+
+function renderTrains(trains) {
+  const list = document.getElementById('trainsList');
+  list.innerHTML = '';
+  trains.forEach(t => {
+    const status = t.alert ? 'ALERT' : (t.active ? 'ACTIVE' : 'PAUSED');
+    const sCls = t.alert ? 't-alert' : (t.active ? 't-active' : 't-paused');
+    const row = document.createElement('div');
+    row.className = 'train-row';
+    row.innerHTML = `
+      <div class="t-id">RO #${t.id}</div>
+      <div>
+        <div class="t-meta">
+          <span>P <b>${t.pressure.toFixed(1)} bar</b></span>
+          <span>Flow <b>${t.flow} m³/h</b></span>
+          <span>SR <b>${(t.salt_rejection*100).toFixed(2)}%</b></span>
+        </div>
+        <div class="health-bar"><div class="health-bar-fill" style="width:${t.health*100}%"></div></div>
+      </div>
+      <div class="t-status ${sCls}">${status}</div>
+    `;
+    list.appendChild(row);
+  });
+}
+
+function renderBins(bins) {
+  const list = document.getElementById('binsList');
+  list.innerHTML = '';
+  bins.forEach(b => {
+    const pct = Math.round(b.fill * 100);
+    const color = pct > 85 ? '#f87171' : pct > 60 ? '#fbbf24' : '#34d399';
+    const row = document.createElement('div');
+    row.className = 'bin-row';
+    row.innerHTML = `
+      <div class="bin-id">${b.id.toUpperCase()}</div>
+      <div class="bin-fill"><div class="bar"><div class="bar-in" style="width:${pct}%;background:${color}"></div></div></div>
+      <div class="pct">${pct}%</div>
+    `;
+    list.appendChild(row);
+  });
+}
+</script>
+
+</body>
+</html>
